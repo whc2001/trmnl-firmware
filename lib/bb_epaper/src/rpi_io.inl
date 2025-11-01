@@ -31,6 +31,7 @@
 #include <linux/spi/spidev.h>
 #include <gpiod.h>
 #include <math.h>
+#include <time.h>
 #ifndef CONSUMER
 #define CONSUMER "Consumer"
 #endif
@@ -39,11 +40,83 @@
 #define pgm_read_dword(a) (*(uint32_t *)a)
 #define memcpy_P memcpy
 struct gpiod_chip *chip = NULL;
+#ifdef GPIOD_API
 struct gpiod_line *lines[64];
+#else
+struct gpiod_line_request *lines[64];
+#endif
 static int spi_fd; // SPI handle
 
 // forward references
 void bbepWakeUp(BBEPDISP *pBBEP);
+
+// Initialize the I2C bus on Linux
+void I2CInit(BBI2C *pI2C, uint32_t iClock)
+{
+char filename[32];
+int iChannel = pI2C->iSDA;
+
+// Only try to initialize the handle if it hasn't already been done
+    if (pI2C->file_i2c == -1) {
+        sprintf(filename, "/dev/i2c-%d", iChannel);
+        if ((pI2C->file_i2c = open(filename, O_RDWR)) < 0)
+        {
+                fprintf(stderr, "Failed to open the i2c bus\n");
+        }
+    }
+} /* I2CInit() */
+//
+// Test if an I2C address responds
+// returns 1 for success, 0 for failure
+//
+uint8_t I2CTest(BBI2C *pI2C, uint8_t addr)
+{
+uint8_t response = 0;
+    if (ioctl(pI2C->file_i2c, I2C_SLAVE, addr) >= 0) {
+            // probe this address
+        uint8_t ucTemp;
+        if (read(pI2C->file_i2c, &ucTemp, 1) >= 0)
+            response = 1;
+    }
+    return response;
+} /* I2CTest() */
+//
+// Read n bytes from the given I2C address
+//
+int I2CRead(BBI2C *pI2C, uint8_t iAddr, uint8_t *pData, int iLen)
+{
+int rc;
+        ioctl(pI2C->file_i2c, I2C_SLAVE, iAddr);
+        rc = read(pI2C->file_i2c, pData, iLen);
+        return rc;
+} /* I2CRead() */
+//
+// Write n bytes to the given address
+//
+int I2CWrite(BBI2C *pI2C, uint8_t iAddr, uint8_t *pData, int iLen)
+{
+int rc;
+        ioctl(pI2C->file_i2c, I2C_SLAVE, iAddr);
+        rc = write(pI2C->file_i2c, pData, iLen);
+        return rc;
+} /* I2CWrite() */
+//
+// Read n bytes from the given address, after setting the register number
+//
+int I2CReadRegister(BBI2C *pI2C, uint8_t iAddr, uint8_t u8Register, uint8_t *pData, int iLen)
+{
+int rc;
+        // Reading from an I2C device involves first writing the 8-bit register
+        // followed by reading the data
+        ioctl(pI2C->file_i2c, I2C_SLAVE, iAddr);
+        rc = write(pI2C->file_i2c, &u8Register, 1); // write the register value
+        if (rc == 1)
+        {
+                rc = read(pI2C->file_i2c, pData, iLen);
+        }
+        return rc;
+
+} /* I2CReadRegister() */
 
 void SPI_transfer(BBEPDISP *pBBEP, uint8_t *pBuf, int iLen)
 {
@@ -58,16 +131,27 @@ struct spi_ioc_transfer spi;
 
 int digitalRead(int iPin)
 {
+	if (lines[iPin] == 0) return 0;
+#ifdef GPIOD_API // 1.x (old) API
   return gpiod_line_get_value(lines[iPin]);
+#else // 2.x (new)
+  return gpiod_line_request_get_value(lines[iPin], iPin) == GPIOD_LINE_VALUE_ACTIVE;
+#endif
 } /* digitalRead() */
 
 void digitalWrite(int iPin, int iState)
 {
+	if (lines[iPin] == 0) return;
+#ifdef GPIOD_API // old 1.6 API
    gpiod_line_set_value(lines[iPin], iState);
+#else // new 2.x API
+   gpiod_line_request_set_value(lines[iPin], iPin, (iState) ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE);
+#endif
 } /* digitalWrite() */
 
 void pinMode(int iPin, int iMode)
 {
+#ifdef GPIOD_API // old 1.6 API
    if (chip == NULL) {
        chip = gpiod_chip_open_by_name("gpiochip0");
    }
@@ -79,6 +163,32 @@ void pinMode(int iPin, int iMode)
    } else { // plain input
        gpiod_line_request_input(lines[iPin], CONSUMER);
    }
+#else // new 2.x API
+   struct gpiod_line_settings *settings;
+   struct gpiod_line_config *line_cfg;
+   struct gpiod_request_config *req_cfg;
+   chip = gpiod_chip_open("/dev/gpiochip0");
+   if (!chip) {
+	printf("chip open failed\n");
+	   return;
+   }
+   settings = gpiod_line_settings_new();
+   if (!settings) {
+	printf("line_settings_new failed\n");
+	   return;
+   }
+   gpiod_line_settings_set_direction(settings, (iMode == OUTPUT) ? GPIOD_LINE_DIRECTION_OUTPUT : GPIOD_LINE_DIRECTION_INPUT);
+   line_cfg = gpiod_line_config_new();
+   if (!line_cfg) return;
+   gpiod_line_config_add_line_settings(line_cfg, (const unsigned int *)&iPin, 1, settings);
+   req_cfg = gpiod_request_config_new();
+   gpiod_request_config_set_consumer(req_cfg, CONSUMER);
+   lines[iPin] = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+   gpiod_request_config_free(req_cfg);
+   gpiod_line_config_free(line_cfg);
+   gpiod_line_settings_free(settings);
+   gpiod_chip_close(chip);
+#endif
 } /* pinMode() */
 
 void delay(int iMS)
@@ -97,10 +207,12 @@ struct timespec res;
     return (long)iTime;
 } /* millis() */
 
+#ifdef FUTURE
 static void delayMicroseconds(int iMS)
 {
   usleep(iMS);
 } /* delayMicroseconds() */
+#endif // FUTURE
 
 //
 // Initialize the GPIO pins and SPI for use by bb_eink

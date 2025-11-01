@@ -38,6 +38,7 @@
 #include "logo_small.h"
 #include "loading.h"
 #include <wifi-helpers.h>
+#include "driver/rtc_io.h"
 
 bool pref_clear = false;
 String new_filename = "";
@@ -1851,7 +1852,10 @@ static void goToSleep(void)
 #elif CONFIG_IDF_TARGET_ESP32C3
   esp_deep_sleep_enable_gpio_wakeup(1 << PIN_INTERRUPT, ESP_GPIO_WAKEUP_GPIO_LOW);
 #elif CONFIG_IDF_TARGET_ESP32S3
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_INTERRUPT, 0);
+  //esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_INTERRUPT, 0);
+  rtc_gpio_pullup_en((gpio_num_t)PIN_INTERRUPT);
+  #define BUTTON_PIN_BITMASK(GPIO) (1ULL << GPIO)  // 2 ^ GPIO_NUMBER in hex
+  esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK(PIN_INTERRUPT), ESP_EXT1_WAKEUP_ANY_LOW);
 #else
 #error "Unsupported ESP32 target for GPIO wakeup configuration"
 #endif

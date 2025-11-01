@@ -111,6 +111,16 @@
    #define EPD_RST_PIN  12
    #define EPD_DC_PIN   11
    #define EPD_BUSY_PIN 13
+
+#elif defined(BOARD_DIY)
+   // Pin definition for DIY Board
+   #define EPD_SCK_PIN  4
+   #define EPD_MOSI_PIN 5
+   #define EPD_CS_PIN   15
+   #define EPD_RST_PIN  6
+   #define EPD_DC_PIN   7
+   #define EPD_BUSY_PIN 16
+
 #else
    #error "Board type not defined. Please define BOARD_WAVESHARE_ESP32_DRIVER or BOARD_TRMNL or BOARD_SEEED_XIAO_ESP32C3 or BOARD_SEEED_XIAO_ESP32S3 in platformio.ini build_flags."
 #endif

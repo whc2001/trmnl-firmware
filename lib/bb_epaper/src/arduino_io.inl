@@ -34,21 +34,6 @@ void bbepSetCS2(BBEPDISP *pBBEP, uint8_t cs)
     digitalWrite(cs, HIGH); // disable second CS for now
 } /* bbepSetCS2() */
 
-void SPI_Write(BBEPDISP *pBBEP, uint8_t *pData, int iLen)
-{
-int i, j;
-uint8_t uc;
-
-    for (i=0; i<iLen; i++) {
-        uc = *pData++;
-        for (j=0; j<8; j++) {
-            digitalWrite(pBBEP->iCLKPin, 0);
-            digitalWrite(pBBEP->iMOSIPin, uc & 0x80);
-            digitalWrite(pBBEP->iCLKPin, 1);
-            uc <<= 1;
-        }
-    }
-} /* SPI_Write() */
 //
 // Initialize the GPIO pins and SPI for use by bb_eink
 //
@@ -73,25 +58,16 @@ void bbepInitIO(BBEPDISP *pBBEP, uint8_t u8DC, uint8_t u8RST, uint8_t u8BUSY, ui
     pBBEP->iSpeed = u32Speed;
     pinMode(pBBEP->iCSPin, OUTPUT);
     digitalWrite(pBBEP->iCSPin, HIGH); // manually control the CS pin
-    if (u32Speed == 0) { // bit bang mode
-        pinMode(pBBEP->iMOSIPin, OUTPUT);
-        pinMode(pBBEP->iCLKPin, OUTPUT);
-    } else {
 #ifdef ARDUINO_ARCH_ESP32
-        SPI.begin(pBBEP->iCLKPin, -1, pBBEP->iMOSIPin, -1); //pBBEP->iCSPin);
+    SPI.begin(pBBEP->iCLKPin, -1, pBBEP->iMOSIPin, -1); //pBBEP->iCSPin);
 #else
-        SPI.begin(); // other architectures have fixed SPI pins
+    SPI.begin(); // other architectures have fixed SPI pins
 #endif
-        SPI.beginTransaction(SPISettings(u32Speed, MSBFIRST, SPI_MODE0));
-#ifdef ARDUINO_ARCH_ESP32
-// For NRF52, you have to leave an 'open' transaction
-        SPI.endTransaction(); // N.B. - if you call beginTransaction() again without a matching endTransaction(), it will hang on ESP32
-#endif
-    }
-    pBBEP->is_awake = 1;
-// Before we can start sending pixels, many panels need to know the display resolution
-    bbepSendCMDSequence(pBBEP, pBBEP->pInitFull);
+    SPI.beginTransaction(SPISettings(u32Speed, MSBFIRST, SPI_MODE0));
+    SPI.endTransaction(); // N.B. - if you call beginTransaction() again without a matching endTransaction(), it will hang on ESP32
     if (pBBEP->iFlags & BBEP_7COLOR) { // need to send before you can send it data
+        pBBEP->is_awake = 1;
+        bbepSendCMDSequence(pBBEP, pBBEP->pInitFull);
         if (pBBEP->iFlags & BBEP_SPLIT_BUFFER) {    
            // Send the same sequence to the second controller
            pBBEP->iCSPin = pBBEP->iCS2Pin;
@@ -143,8 +119,6 @@ void bbepWriteIT8951CmdArgs(BBEPDISP *pBBEP, uint16_t cmd, uint16_t *pArgs, int 
 //
 void bbepWriteCmd(BBEPDISP *pBBEP, uint8_t cmd)
 {
-//Serial.printf("CMD: 0x%02x\n", cmd);
-
     if (!pBBEP->is_awake) {
         // if it's asleep, it can't receive commands
         bbepWakeUp(pBBEP);
@@ -153,11 +127,7 @@ void bbepWriteCmd(BBEPDISP *pBBEP, uint8_t cmd)
     digitalWrite(pBBEP->iDCPin, LOW);
     delay(1);
     digitalWrite(pBBEP->iCSPin, LOW);
-    if (pBBEP->iSpeed == 0) { // bit bang
-        SPI_Write(pBBEP, &cmd, 1);
-    } else {
-        SPI.transfer(cmd);
-    }
+    SPI.transfer(cmd);
     digitalWrite(pBBEP->iCSPin, HIGH);
     digitalWrite(pBBEP->iDCPin, HIGH); // leave data mode as the default
 } /* bbepWriteCmd() */
@@ -166,55 +136,30 @@ void bbepWriteCmd(BBEPDISP *pBBEP, uint8_t cmd)
 //
 void bbepWriteData(BBEPDISP *pBBEP, uint8_t *pData, int iLen)
 {
-//if (iLen < 5) {
-//  Serial.print("DATA: ");
-//  for (int i=0; i<iLen; i++) {
-//     Serial.printf("0x%02x, ", pData[i]);
-//  }
-//  Serial.println(" ");
-//} else {
-//  Serial.printf("DATA: len=%d\n", iLen);
-//}
 //    digitalWrite(pBBEP->iDCPin, HIGH);
 #ifdef ARDUINO_ARCH_ESP32
     if (pBBEP->iFlags & BBEP_CS_EVERY_BYTE) {
         for (int i=0; i<iLen; i++) {
             digitalWrite(pBBEP->iCSPin, LOW);
-            if (pBBEP->iSpeed == 0) { // bit bang
-                SPI_Write(pBBEP, &pData[i], 1);
-            } else {
-                SPI.transfer(pData[i]);
-            }
+            SPI.transfer(pData[i]);
             digitalWrite(pBBEP->iCSPin, HIGH);
         }
     } else {
         digitalWrite(pBBEP->iCSPin, LOW);
-        if (pBBEP->iSpeed == 0) { // bit bang
-            SPI_Write(pBBEP, pData, iLen);
-        } else {
-            SPI.transferBytes(pData, NULL, iLen);
-        }
+        SPI.transferBytes(pData, NULL, iLen);
         digitalWrite(pBBEP->iCSPin, HIGH);
     }
 #else
     if (pBBEP->iFlags & BBEP_CS_EVERY_BYTE) {
         for (int i=0; i<iLen; i++) { // Arduino clobbers the data (duplex)
             digitalWrite(pBBEP->iCSPin, LOW);
-            if (pBBEP->iSpeed == 0) { // bit bang
-                SPI_Write(pBBEP, &pData[i], 1);
-            } else {
-                SPI.transfer(pData[i]);
-            }
+            SPI.transfer(pData[i]);
             digitalWrite(pBBEP->iCSPin, HIGH);
         }
     } else {
         digitalWrite(pBBEP->iCSPin, LOW);
         for (int i=0; i<iLen; i++) { // Arduino clobbers the data (duplex)
-            if (pBBEP->iSpeed == 0) { // bit bang
-                SPI_Write(pBBEP, &pData[i], 1);
-            } else {
-                SPI.transfer(pData[i]);
-            }
+            SPI.transfer(pData[i]);
         }
         digitalWrite(pBBEP->iCSPin, HIGH);
     }

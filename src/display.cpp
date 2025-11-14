@@ -10,8 +10,8 @@
 #include "bb_epaper.h"
 //#define ONE_BIT_PANEL EP426_800x480
 //#define TWO_BIT_PANEL EP426_800x480_4GRAY
-#define ONE_BIT_PANEL EP75_800x480_GEN2
-#define TWO_BIT_PANEL EP75_800x480_4GRAY_GEN2
+#define ONE_BIT_PANEL EP75_800x480
+#define TWO_BIT_PANEL EP75_800x480_4GRAY_OLD
 BBEPAPER bbep(ONE_BIT_PANEL);
 // Counts the number of partial updates to know when to do a full update
 RTC_DATA_ATTR int iUpdateCount = 0;

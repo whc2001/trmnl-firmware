@@ -2,8 +2,8 @@
 #define CONFIG_H
 
 #define FW_MAJOR_VERSION 1
-#define FW_MINOR_VERSION 6
-#define FW_PATCH_VERSION 10
+#define FW_MINOR_VERSION 7
+#define FW_PATCH_VERSION 2
 
 // Helper macros for stringification
 #define STRINGIFY(x) #x
@@ -24,6 +24,7 @@
 #define PREFERENCES_FRIENDLY_ID "friendly_id"
 #define PREFERENCES_FRIENDLY_ID_DEFAULT ""
 #define PREFERENCES_SLEEP_TIME_KEY "refresh_rate"
+#define PREFERENCES_TEMP_PROFILE "temp_profile"
 #define PREFERENCES_LOG_KEY "log_"
 #define PREFERENCES_LOG_BUFFER_HEAD_KEY "log_head"
 #define PREFERENCES_LOG_ID_KEY "log_id"
@@ -38,11 +39,21 @@
 
 #define DISPLAY_BMP_IMAGE_SIZE 48062 // in bytes - 62 bytes - header; 48000 bytes - bitmap (480*800 1bpp) / 8
 #define DEFAULT_IMAGE_SIZE 48000
+#ifdef BOARD_TRMNL_X
+#define MAX_IMAGE_SIZE 750000 // Use PSRAM on the ESP32-S3
+#else
 #define MAX_IMAGE_SIZE 90000 // largest compressed image we can receive
+#endif
 #define SLEEP_uS_TO_S_FACTOR 1000000           /* Conversion factor for micro seconds to seconds */
 #define SLEEP_TIME_TO_SLEEP 900                /* Time ESP32 will go to sleep (in seconds) */
 #define SLEEP_TIME_WHILE_NOT_CONNECTED 5       /* Time ESP32 will go to sleep (in seconds) */
 #define SLEEP_TIME_WHILE_PLUGIN_NOT_ATTACHED 5 /* Time ESP32 will go to sleep (in seconds) */
+
+// Different display profiles
+#define TEMP_PROFILE_DEFAULT 0
+#define TEMP_PROFILE_A 1
+#define TEMP_PROFILE_B 2
+#define TEMP_PROFILE_C 3
 
 #define MS_TO_S_FACTOR 1000                    /* Conversion factor for milliseconds to seconds */
 
@@ -63,13 +74,16 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #if defined(BOARD_TRMNL)
 #define PIN_INTERRUPT 2
 #define DEVICE_MODEL "og"
+#elif defined(BOARD_TRMNL_X)
+#define PIN_INTERRUPT 0
+#define DEVICE_MODEL "x"
 #elif defined(BOARD_WAVESHARE_ESP32_DRIVER)
 #define PIN_INTERRUPT 33
 #define DEVICE_MODEL "waveshare"
 #define FAKE_BATTERY_VOLTAGE
 #elif defined(BOARD_SEEED_XIAO_ESP32C3)
 #define DEVICE_MODEL "seeed_esp32c3"
-#define PIN_INTERRUPT 9         //the boot button on the XIAO ESP32-C3, this button can't be used as wakeup source though
+#define PIN_INTERRUPT 9         //the boot button on the XIAO ESP32-C3, this button can't be used as wakeup  source though
                                 //because it's not in the RTC GPIO group. Instead, you can always use the reset button to
                                 //wake up the device. Resetting WiFi configuration needs special routine - press reset button
                                 //then press the boot button in less than 2 seconds, and hold it for 5 seconds.
@@ -105,6 +119,7 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #define BUTTON_HOLD_TIME 5000
 #define BUTTON_MEDIUM_HOLD_TIME 1000
 #define BUTTON_SOFT_RESET_TIME 15000
+#define BUTTON_DOUBLE_CLICK_WINDOW 800
 
 #define SERVER_MAX_RETRIES 3
 

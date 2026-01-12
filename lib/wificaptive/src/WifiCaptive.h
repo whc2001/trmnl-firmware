@@ -29,6 +29,9 @@
 
 #define WIFI_SSID_KEY(i) ("wifi_" + String(i) + "_ssid").c_str()
 #define WIFI_PSWD_KEY(i) ("wifi_" + String(i) + "_pswd").c_str()
+#define WIFI_ENT_KEY(i) ("wifi_" + String(i) + "_ent").c_str()
+#define WIFI_USERNAME_KEY(i) ("wifi_" + String(i) + "_username").c_str()
+#define WIFI_IDENTITY_KEY(i) ("wifi_" + String(i) + "_identity").c_str()
 
 #define WIFI_LAST_INDEX "wifi_last_index"
 
@@ -40,6 +43,7 @@ private:
     String _ssid = "";
     String _password = "";
     String _api_server = "";
+    WifiCredentials _enterprise_credentials;
 
     std::function<void()> _resetcallback;
 
@@ -77,7 +81,18 @@ public:
     /// @brief Connects to the saved SSID with the best signal strength
     /// @return True if successfully connected to saved SSID, false otherwise.
     bool autoConnect();
+
+    /// @brief Checks if there are saved WiFi credentials
+    /// @return True if there are saved credentials, false otherwise.
 };
+
+bool checkForSavedCredentials();
+
+/// @brief Searches for a specific WiFi network by SSID
+/// @param ssid The SSID to search for
+/// @param rssi_out Optional pointer to receive signal strength (RSSI in dBm, -100 to 0)
+/// @return True if network is found, false otherwise
+bool findNetwork(const char* ssid, int32_t* rssi_out = nullptr);
 
 extern WifiCaptive WifiCaptivePortal;
 

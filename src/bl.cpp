@@ -20,7 +20,6 @@
 #include <Update.h>
 #include <math.h>
 #include <filesystem.h>
-#include "trmnl_log.h"
 #include <stored_logs.h>
 #include <button.h>
 #include "api-client/submit_log.h"
@@ -36,6 +35,7 @@
 #include <serialize_log.h>
 #include <preferences_persistence.h>
 #include "logo_small.h"
+#include "logo_medium.h"
 #include "loading.h"
 #include <wifi-helpers.h>
 #include "driver/rtc_io.h"
@@ -147,6 +147,7 @@ void bl_init(void)
     case DoubleClick:
       double_click = true;
       break;
+    case ShortPress:
     case NoAction:
       break;
     case SoftReset:
@@ -264,9 +265,14 @@ void bl_init(void)
   list_files();
   log_nvs_usage();
 
+  // DEBUG - test message display
+  // showMessageWithLogo(MSG_FORMAT_ERROR);
+  // display_show_msg(storedLogoOrDefault(1), WIFI_CONNECT, "ABCDEF", true, FW_VERSION_STRING, "Hello World!");
+  // wifiErrorDeepSleep();
+
   WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
 
-// uncomment this to hardcode WiFi credentials (useful for testing wifi errors, etc.)
+// uncdcomment this to hardcode WiFi credentials (useful for testing wifi errors, etc.)
 // #define HARDCODED_WIFI
 #ifdef HARDCODED_WIFI
   WifiCredentials hardcodedCreds = {.ssid = "ssid-goes-here", .pswd = "password-goes-here"};
@@ -639,7 +645,9 @@ static https_request_err_e downloadAndShow()
         https.setTimeout(15000);
         https.setConnectTimeout(15000);
 
-        // Include ID and Access Token if the image is hosted on the same server as the API 
+        https.addHeader("Accept-Encoding", "identity"); // Disable compression for raw image data
+
+        // Include ID and Access Token if the image is hosted on the same server as the API
         if (strncmp(filename, apiDisplayInputs.baseUrl.c_str(), apiDisplayInputs.baseUrl.length()) == 0)
         {
           https.addHeader("ID", apiDisplayInputs.macAddress);
@@ -710,43 +718,51 @@ static https_request_err_e downloadAndShow()
           }
           
           Log.info("%s [%d]: Content size: %d\r\n", __FILE__, __LINE__, https.getSize());
-          
-          uint32_t counter = 0;
-          if (content_size > MAX_IMAGE_SIZE)
-          {
-            //Log_error_submit("Receiving failed; file size too big");
-            Log.info("%s [%d]: Receiving failed; file size too big: %d\r\n", __FILE__, __LINE__, content_size);
-            result = HTTPS_IMAGE_FILE_TOO_BIG;
-            return HTTPS_REQUEST_FAILED;
-          }
-          WiFiClient *stream = https.getStreamPtr();
-          Log.info("%s [%d]: RSSI: %d\r\n", __FILE__, __LINE__, WiFi.RSSI());
-          Log.info("%s [%d]: Stream timeout: %d\r\n", __FILE__, __LINE__, stream->getTimeout());
 
-          Log.info("%s [%d]: Stream available (may show as 0 and that's okay): %d\r\n", __FILE__, __LINE__, stream->available());
+          uint32_t counter = 0;
+
+          if (content_size <= 0)
+          {
+            Log.warning("%s [%d]: Content-Length not provided (size: %d)\r\n", __FILE__, __LINE__, content_size);
+          }
 
           bool isPNG = https.header("Content-Type") == "image/png";
+          bool isJPEG = https.header("Content-Type") == "image/jpeg";
 
           Log.info("%s [%d]: Starting a download at: %d\r\n", __FILE__, __LINE__, getTime());
           heap_caps_check_integrity_all(true);
-          buffer = (uint8_t *)malloc(content_size);
 
-          counter = downloadStream(stream, content_size, buffer);
+          // getString() handles chunked transfer encoding automatically
+          String payload = https.getString();
+          counter = payload.length();
+
+          if (counter == 0)
+          {
+            Log_error_submit("Receiving failed. No data received");
+            return HTTPS_WRONG_IMAGE_SIZE;
+          }
+
+          if (counter > MAX_IMAGE_SIZE)
+          {
+            Log_error_submit("Receiving failed; file size too big: %d", counter);
+            return HTTPS_IMAGE_FILE_TOO_BIG;
+          }
+
+          buffer = (uint8_t *)malloc(counter);
+
+          if (buffer == NULL)
+          {
+            Log_error_submit("Failed to allocate %d bytes for image buffer", counter);
+            return HTTPS_OUT_OF_MEMORY;
+          }
+
+          memcpy(buffer, payload.c_str(), counter);
+          content_size = counter;
 
           if (counter >= 2 && buffer[0] == 'B' && buffer[1] == 'M')
           {
             isPNG = false;
             Log.info("BMP file detected");
-          }
-
-          if (counter != content_size)
-          {
-
-            Log_error_submit("Receiving failed. Read: %d", counter);
-
-            // display_show_msg(const_cast<uint8_t *>(default_icon), API_SIZE_ERROR);
-
-            return HTTPS_WRONG_IMAGE_SIZE;
           }
 
           submitStoredLogs();
@@ -769,15 +785,13 @@ static https_request_err_e downloadAndShow()
           }
 
           bool image_reverse = false;
-          if (isPNG)
+          if (isPNG || isJPEG)
           {
             writeImageToFile("/current.png", buffer, content_size);
-            Log.info("%s [%d]: Decoding png\r\n", __FILE__, __LINE__);
+            Log.info("%s [%d]: Decoding %s\r\n", __FILE__, __LINE__, (isPNG) ? "png" : "jpeg");
             display_show_image(buffer, content_size, true);
-//            delay(100);
-//            free(buffer);
-//            buffer = nullptr;
-//            png_res = decodePNG("/current.png", decodedPng);
+            free(buffer);
+            buffer = nullptr;
             png_res = PNG_NO_ERR; // DEBUG
           }
           else
@@ -849,6 +863,8 @@ static https_request_err_e downloadAndShow()
             }
             Log.info("Free heap at before display - %d", ESP.getMaxAllocHeap());
             display_show_image(buffer, content_size, true);
+            free(buffer);
+            buffer = nullptr;
 
             // Using filename from API response
             new_filename = apiDisplayResult.response.filename;
@@ -922,14 +938,22 @@ uint32_t downloadStream(WiFiClient *stream, int content_size, uint8_t *buffer)
   int iteration_counter = 0;
   int counter2 = content_size;
   unsigned long download_start = millis();
+  unsigned long last_data_time = millis();
   int counter = 0;
-  while (counter != content_size && millis() - download_start < 10000)
+
+  while (counter < content_size && millis() - download_start < 30000)
   {
     if (stream->available())
     {
       Log.info("%s [%d]: Downloading... Available bytes: %d\r\n", __FILE__, __LINE__, stream->available());
-      counter += stream->readBytes(buffer + counter, counter2 -= counter);
+      int bytes_to_read = min(stream->available(), counter2 - counter);
+      counter += stream->readBytes(buffer + counter, bytes_to_read);
       iteration_counter++;
+      last_data_time = millis();
+    }
+    else if (!stream->connected() || millis() - last_data_time > 5000)
+    {
+      break;
     }
     delay(10);
   }
@@ -2063,17 +2087,16 @@ static void writeSpecialFunction(SPECIAL_FUNCTION function)
   }
 }
 
-static void showMessageWithLogo(MSG message_type) {
-  display_show_msg(storedLogoOrDefault(0), message_type);
-  need_to_refresh_display = 1;
-  preferences.putBool(PREFERENCES_DEVICE_REGISTERED_KEY, false);
-}
-
 static void showMessageWithLogo(MSG message_type, String friendly_id, bool id, const char *fw_version, String message)
 {
   display_show_msg(storedLogoOrDefault(0), message_type, friendly_id, id, fw_version, message);
   need_to_refresh_display = 1;
   preferences.putBool(PREFERENCES_DEVICE_REGISTERED_KEY, false);
+}
+
+static void showMessageWithLogo(MSG message_type)
+{
+  display_show_msg(storedLogoOrDefault(0), message_type);
 }
 
 /**
@@ -2097,6 +2120,9 @@ static uint8_t *storedLogoOrDefault(int iType)
 //  {
 //    return buffer;
 //  }
+#ifdef BOARD_TRMNL_X
+    return const_cast<uint8_t *>(logo_medium);
+#else
   if (iType == 0) {
     return const_cast<uint8_t *>(logo_small);
   } else {
@@ -2105,6 +2131,7 @@ static uint8_t *storedLogoOrDefault(int iType)
     apiDisplayResult.response.maximum_compatibility = true;
     return const_cast<uint8_t *>(loading);
   }
+#endif
 }
 
 static bool saveCurrentFileName(String &name)

@@ -31,6 +31,7 @@
 #include "http_client.h"
 #include <api-client/display.h>
 #include "driver/gpio.h"
+#include "esp_sntp.h"
 #include <nvs.h>
 #include <serialize_log.h>
 #include <preferences_persistence.h>
@@ -40,6 +41,16 @@
 #include <wifi-helpers.h>
 #include "driver/rtc_io.h"
 
+#ifdef SENSOR_SDA
+#include <bb_scd41.h>
+#include <bb_temperature.h>
+SCD41 scd41;
+BBTemp bbt;
+bool bCO2 = false;
+int iSensorType = -1;
+long lSampleTime;
+RTC_DATA_ATTR int lastCO2 = 0, lastSCDTemp = 0, lastTemp = 0, lastSCDHumid = 0, lastHumid = 0, lastPressure = 0, lastType = -1, lastTime = 0;
+#endif // SENSOR_SDA
 bool pref_clear = false;
 String new_filename = "";
 ApiDisplayResult apiDisplayResult;
@@ -85,10 +96,10 @@ static void showMessageWithLogo(MSG message_type, String friendly_id, bool id, c
 static void showMessageWithLogo(MSG message_type, const ApiSetupResponse &apiResponse);
 static void wifiErrorDeepSleep();
 static uint8_t *storedLogoOrDefault(int iType);
-static bool saveCurrentFileName(String &name);
 static bool checkCurrentFileName(String &newName);
 static DeviceStatusStamp getDeviceStatusStamp();
 void log_nvs_usage();
+void fixFileName(const char *src, char *dest);
 
 static unsigned long startup_time = 0;
 
@@ -119,7 +130,63 @@ void bl_init(void)
   Log_info("BL init success");
   pins_init();
   vBatt = readBatteryVoltage(); // Read the battery voltage BEFORE WiFi is turned on
-
+#ifdef SENSOR_SDA
+  // check if there is a SCD41 or supported temperature sensor attached
+  if (scd41.init(SENSOR_SDA, SENSOR_SCL) == SCD41_SUCCESS) {
+    bCO2 = true;
+    Log.info("%s [%d]: SCD41 sensor found!\r\n", __FILE__, __LINE__);
+//    scd41.start(SCD41_MODE_PERIODIC);
+    scd41.wakeup();
+    // The SCD41 needs to be re-initialized after big Vcc variations from the last wakeup
+    // put it in a 'confused' state. If we don't re-initialize it, it won't generate more samples
+    scd41.sendCMD(SCD41_CMD_REINIT);
+    vTaskDelay(3); // allow time to reinitialize
+    scd41.triggerSample(); // trigger a 'one-shot' sample that takes about 5 seconds to complete
+  }
+  if (bbt.init(SENSOR_SDA, SENSOR_SCL) == BBT_SUCCESS) {
+    iSensorType = bbt.type();
+    Log.info("%s [%d]: supported sensor found! (%d)\r\n", __FILE__, __LINE__, iSensorType);
+    bbt.start(); // start the sensor
+  }
+  if (!bCO2 && iSensorType < 0) {
+    Log.info("%s [%d]: No sensor found on I2C bus %d/%d\r\n", __FILE__, __LINE__, SENSOR_SDA, SENSOR_SCL);
+  }
+  // wait for the sensor(s) to generate a sample
+  if (bCO2 || iSensorType >= 0) {
+    Log.info("%s [%d]: Light sleep for 5 seconds to allow sensor to generate a sample\r\n", __FILE__, __LINE__);
+    esp_sleep_enable_timer_wakeup(5000 * 1000L); // the SCD4x needs 5 seconds to get a sample
+    esp_light_sleep_start(); // use light sleep to save power
+  }
+  if (bCO2) {
+    if (scd41.getSample() == SCD41_SUCCESS) {
+        time((time_t *)&lastTime); // get the UTC epoch time that the same was captured
+        lastCO2 = scd41.co2();
+        lastSCDTemp = scd41.temperature();
+        lastSCDHumid = scd41.humidity();
+        Log.info("%s [%d]: Got SCD41 sample: CO2 = %dppm\r\n", __FILE__, __LINE__, lastCO2);
+        lSampleTime = millis(); // measure the time - it needs 5 seconds to generate a sample
+    } else {
+        Log.info("%s [%d]: SCD41 sample failed\r\n", __FILE__, __LINE__);
+        lastCO2 = 0;
+    }
+    scd41.shutdown(); // conserve power since we completed getting a sample ready for the next TRMNL wakeup
+  }
+  if (iSensorType >= 0) {
+      BBT_SAMPLE bbts;
+      if (bbt.getSample(&bbts) == BBT_SUCCESS) {
+        time((time_t *)&lastTime); // get the UTC epoch time that the same was captured
+        lastTemp = bbts.temperature;
+        lastHumid = bbts.humidity;
+        lastPressure = bbts.pressure;
+        lastType = iSensorType;
+        Log.info("%s [%d]: Got bb_temperature sample: Temp = %d.%dC\r\n", __FILE__, __LINE__, lastTemp/10, lastTemp % 10);
+      } else {
+        lastType = -1;
+        Log.info("%s [%d]: bb_temperature sample failed\r\n", __FILE__, __LINE__);
+      }
+      bbt.stop(); // turn off the sensor to conserve power
+  }
+#endif // SENSOR_SDA
 #if defined(BOARD_SEEED_XIAO_ESP32C3)
   delay(2000);
 
@@ -539,6 +606,16 @@ ApiDisplayInputs loadApiDisplayInputs(Preferences &preferences)
 
   inputs.baseUrl = preferences.getString(PREFERENCES_API_URL, API_BASE_URL);
 
+  char wakeupReasonString[32] = {0};
+  if (parseWakeupReasonToStr(wakeupReasonString, sizeof(wakeupReasonString), (esp_sleep_source_t)wakeup_reason))
+  {
+    inputs.updateSource = String(wakeupReasonString);
+  }
+  else
+  {
+    inputs.updateSource = "unknown";
+  }
+
   if (preferences.isKey(PREFERENCES_API_KEY))
   {
     inputs.apiKey = preferences.getString(PREFERENCES_API_KEY, PREFERENCES_API_KEY_DEFAULT);
@@ -630,6 +707,18 @@ static https_request_err_e downloadAndShow()
 
   https_request_err_e result = handleApiDisplayResponse(apiDisplayResult.response);
 
+  if (!status && result == HTTPS_SUCCESS) { // this means we already have this image stored in SPIFFS
+      char szTemp[36];
+      fixFileName(apiDisplayResult.response.filename.c_str(), szTemp);
+      Log.info("%s [%d]: Reading %s from SPIFFS\r\n", __FILE__, __LINE__, szTemp);
+      size_t content_size = filesystem_read_and_allocate(szTemp, &buffer);
+      Log.info("%s [%d]: Decoding image...\r\n", __FILE__, __LINE__);
+      display_show_image(buffer, content_size, true);
+      free(buffer);
+      buffer = nullptr;
+      return result;
+  }
+
   withHttp(
       filename,
       [&](HTTPClient *httpsp, HttpError error) -> https_request_err_e
@@ -688,9 +777,23 @@ static https_request_err_e downloadAndShow()
           int content_size = https.getSize();
           if(httpCode == HTTP_CODE_PERMANENT_REDIRECT ||
             httpCode == HTTP_CODE_TEMPORARY_REDIRECT){
+              String location = https.getLocation();
               https.end();
-              https.begin(API_BASE_URL +https.getLocation());
-              Log_info("Redirected to: %s", https.getLocation().c_str());
+              String redirectUrl;
+              if (location.startsWith("http://") || location.startsWith("https://")) {
+                redirectUrl = location;
+              } else {
+                // Extract origin from the original image URL for relative redirects
+                String origin = String(filename);
+                int schemeEnd = origin.indexOf("://");
+                if (schemeEnd != -1) {
+                  int pathStart = origin.indexOf('/', schemeEnd + 3);
+                  if (pathStart != -1) origin = origin.substring(0, pathStart);
+                }
+                redirectUrl = origin + location;
+              }
+              https.begin(redirectUrl);
+              Log_info("Redirected to: %s", redirectUrl.c_str());
               https.setTimeout(15000);
               https.setConnectTimeout(15000);
               httpCode = https.GET();
@@ -720,10 +823,11 @@ static https_request_err_e downloadAndShow()
           Log.info("%s [%d]: Content size: %d\r\n", __FILE__, __LINE__, https.getSize());
 
           uint32_t counter = 0;
-
+          String payload;
+          long lStartTime = millis();
           if (content_size <= 0)
           {
-            Log.warning("%s [%d]: Content-Length not provided (size: %d)\r\n", __FILE__, __LINE__, content_size);
+            Log.warning("%s [%d]: Content-Length not provided, using getString()\r\n", __FILE__, __LINE__);
           }
 
           bool isPNG = https.header("Content-Type") == "image/png";
@@ -732,9 +836,34 @@ static https_request_err_e downloadAndShow()
           Log.info("%s [%d]: Starting a download at: %d\r\n", __FILE__, __LINE__, getTime());
           heap_caps_check_integrity_all(true);
 
-          // getString() handles chunked transfer encoding automatically
-          String payload = https.getString();
-          counter = payload.length();
+          buffer = nullptr;
+          if (content_size <= 0) {
+          // getString() handles lack of content size and chunked transfer encoding automatically
+            payload = https.getString();
+            counter = payload.length();
+            buffer = (uint8_t *)payload.c_str();
+          } else {
+            counter = https.getSize();
+            if (counter && counter <= MAX_IMAGE_SIZE) {
+              WiFiClient *stream = https.getStreamPtr();
+              int iLen, iCount = 0;
+
+              buffer = (uint8_t *)malloc(counter);
+              if (buffer) {
+                while (iCount < counter && millis() < (lStartTime + API_FIRST_RETRY*1000) && stream->connected()) {
+                  iLen = stream->available();
+                  if (iLen) {
+                    stream->readBytes(&buffer[iCount], iLen);
+                    iCount += iLen;
+                  } else {
+                    vTaskDelay(1); // yield to allow time for the data to arrive
+                  }
+                }
+              } // if buffer
+              stream->stop(); // Important! If you don't do this, WiFi will have a memory exception later
+            }
+          } // if payload size is non-zero
+          Log.info("%s [%d]: %d bytes received in %d milliseconds\r\n", __FILE__, __LINE__, counter, (int)(millis() - lStartTime));
 
           if (counter == 0)
           {
@@ -748,15 +877,13 @@ static https_request_err_e downloadAndShow()
             return HTTPS_IMAGE_FILE_TOO_BIG;
           }
 
-          buffer = (uint8_t *)malloc(counter);
-
           if (buffer == NULL)
           {
             Log_error_submit("Failed to allocate %d bytes for image buffer", counter);
             return HTTPS_OUT_OF_MEMORY;
           }
 
-          memcpy(buffer, payload.c_str(), counter);
+          //memcpy(buffer, payload.c_str(), counter);
           content_size = counter;
 
           if (counter >= 2 && buffer[0] == 'B' && buffer[1] == 'M')
@@ -770,27 +897,17 @@ static https_request_err_e downloadAndShow()
           WiFi.disconnect(true); // no need for WiFi, save power starting here
           Log.info("%s [%d]: Received successfully; WiFi off; WiFi off\r\n", __FILE__, __LINE__);
 
-
-          if (filesystem_file_exists("/current.bmp") || filesystem_file_exists("/current.png"))
-          {
-            filesystem_file_delete("/last.bmp");
-            filesystem_file_delete("/last.png");
-            filesystem_file_rename("/current.png", "/last.png");
-            filesystem_file_rename("/current.bmp", "/last.bmp");
-// Disable partial update (for now)
-//            if (filesystem_file_exists("/last.png")) {
-//                buffer_old = display_read_file("/last.png", &file_size_old);
-//                Log.info("%s [%d]: Reading last.png to use for partial update, size = %d\r\n", __FILE__, __LINE__, file_size_old);
-//            }
-          }
-
           bool image_reverse = false;
           if (isPNG || isJPEG)
           {
-            writeImageToFile("/current.png", buffer, content_size);
+            char szTemp[36];
+            fixFileName(apiDisplayResult.response.filename.c_str(), szTemp);
+            Log.info("%s [%d]: Writing %s to SPIFFS\r\n", __FILE__, __LINE__, szTemp);
+            filesystem_purge_old_file(szTemp); // try to delete the old version or older than 24h
+            writeImageToFile(szTemp, buffer, content_size);
             Log.info("%s [%d]: Decoding %s\r\n", __FILE__, __LINE__, (isPNG) ? "png" : "jpeg");
             display_show_image(buffer, content_size, true);
-            free(buffer);
+            //free(buffer); // N.B. - don't free it because it might be a String payload, not an allocated block
             buffer = nullptr;
             png_res = PNG_NO_ERR; // DEBUG
           }
@@ -818,12 +935,6 @@ static https_request_err_e downloadAndShow()
 
             // Print the extracted string
             Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
-
-            bool res = saveCurrentFileName(new_filename);
-            if (res)
-              Log.info("%s [%d]: New filename saved\r\n", __FILE__, __LINE__);
-            else
-              Log.error("%s [%d]: New image name saving error!", __FILE__, __LINE__);
 
             if (result != HTTPS_PLUGIN_NOT_ATTACHED)
               result = HTTPS_SUCCESS;
@@ -872,12 +983,6 @@ static https_request_err_e downloadAndShow()
             // Print the extracted string
             Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
 
-            bool res = saveCurrentFileName(new_filename);
-            if (res)
-              Log.info("%s [%d]: New filename saved\r\n", __FILE__, __LINE__);
-            else
-              Log.error("%s [%d]: New image name saving error!", __FILE__, __LINE__);
-
             if (result != HTTPS_PLUGIN_NOT_ATTACHED)
               result = HTTPS_SUCCESS;
           }
@@ -908,7 +1013,9 @@ static https_request_err_e downloadAndShow()
 
           if (isPNG && png_res != PNG_NO_ERR)
           {
-            filesystem_file_delete("/current.png");
+            char szTemp[36];
+            fixFileName(apiDisplayResult.response.filename.c_str(), szTemp);
+            filesystem_file_delete(szTemp);
             Log_error_submit("error parsing image file - %s", error.c_str());
 
             return HTTPS_WRONG_IMAGE_FORMAT;
@@ -1018,7 +1125,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
               if (res)
                 Log.info("%s [%d]: Flag written true successfully\r\n", __FILE__, __LINE__);
               else
-                Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
             }
           }
           else
@@ -1040,7 +1147,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
               if (res)
                 Log.info("%s [%d]: Flag written false successfully\r\n", __FILE__, __LINE__);
               else
-                Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
             }
           }
           // Using filename from API response
@@ -1050,12 +1157,12 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
           Log.info("%s [%d]: New filename - %s\r\n", __FILE__, __LINE__, new_filename.c_str());
           if (!checkCurrentFileName(new_filename))
           {
-            Log.info("%s [%d]: New image. Show it.\r\n", __FILE__, __LINE__);
+            Log.info("%s [%d]: New image. Download and show it.\r\n", __FILE__, __LINE__);
             status = true;
           }
           else
           {
-            Log.info("%s [%d]: Old image. No needed to show it.\r\n", __FILE__, __LINE__);
+            Log.info("%s [%d]: Old image. Read from FLASH and show it.\r\n", __FILE__, __LINE__);
             status = false;
             result = HTTPS_SUCCESS;
           }
@@ -1153,7 +1260,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
                   if (res)
                     Log.info("%s [%d]: Flag written true successfully\r\n", __FILE__, __LINE__);
                   else
-                    Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                    Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
                 }
               }
               else
@@ -1172,7 +1279,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
                   if (res)
                     Log.info("%s [%d]: Flag written false successfully\r\n", __FILE__, __LINE__);
                   else
-                    Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                    Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
                 }
               }
               status = true;
@@ -1255,7 +1362,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
                   if (res)
                     Log.info("%s [%d]: Flag written true successfully\r\n", __FILE__, __LINE__);
                   else
-                    Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                    Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
                 }
               }
               else
@@ -1275,7 +1382,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
                   if (res)
                     Log.info("%s [%d]: Flag written false successfully\r\n", __FILE__, __LINE__);
                   else
-                    Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                    Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
                 }
               }
               status = true;
@@ -1468,7 +1575,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
                   if (res)
                     Log.info("%s [%d]: Flag written true successfully\r\n", __FILE__, __LINE__);
                   else
-                    Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                    Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
                 }
               }
               else
@@ -1488,7 +1595,7 @@ https_request_err_e handleApiDisplayResponse(ApiDisplayResponse &apiResponse)
                   if (res)
                     Log.info("%s [%d]: Flag written false successfully\r\n", __FILE__, __LINE__);
                   else
-                    Log.error("%s [%d]: FLag writing failed\r\n", __FILE__, __LINE__);
+                    Log.error("%s [%d]: Flag writing failed\r\n", __FILE__, __LINE__);
                 }
               }
               status = true;
@@ -1544,6 +1651,7 @@ static bool performApiSetup()
   inputs.baseUrl = preferences.getString(PREFERENCES_API_URL, API_BASE_URL);
   inputs.macAddress = WiFi.macAddress();
   inputs.firmwareVersion = FW_VERSION_STRING;
+  inputs.model = String(DEVICE_MODEL);
 
   Log.info("%s [%d]: [HTTPS] begin /api/setup ...\r\n", __FILE__, __LINE__);
   Log.info("%s [%d]: RSSI: %d\r\n", __FILE__, __LINE__, WiFi.RSSI());
@@ -1862,6 +1970,7 @@ static void goToSleep(void)
   WiFi.mode(WIFI_OFF); 
   filesystem_deinit();
   uint32_t time_to_sleep = SLEEP_TIME_TO_SLEEP;
+
   if (preferences.isKey(PREFERENCES_SLEEP_TIME_KEY))
     time_to_sleep = preferences.getUInt(PREFERENCES_SLEEP_TIME_KEY, SLEEP_TIME_TO_SLEEP);
   Log.info("%s [%d]: total awake time - %d ms\r\n", __FILE__, __LINE__, millis() - startup_time); 
@@ -1883,6 +1992,10 @@ static void goToSleep(void)
 #else
 #error "Unsupported ESP32 target for GPIO wakeup configuration"
 #endif
+#ifdef BOARD_XTEINK_X4
+  gpio_hold_en(GPIO_NUM_13); // MOSFET enabling the battery power
+  gpio_deep_sleep_hold_en(); // Needed to keep the battery power enabled during RTC sleep
+#endif
   esp_deep_sleep_start();
 }
 
@@ -1897,8 +2010,32 @@ static bool setClock()
 {
   bool sync_status = false;
   struct tm timeinfo;
+  int iDeltaTime;
+  Preferences prefs;
 
-  configTime(0, 0, "time.google.com", "time.cloudflare.com");
+  prefs.begin("data");
+  uint32_t u32Epoch = prefs.getUInt("last_sync", 0); // Get the last time sync time
+  iDeltaTime = getTime() - u32Epoch; // Number of seconds since the last sync
+  Log.info("%s [%d]: epoch time: %d iDelta: %d\r\n", __FILE__, __LINE__, getTime(), iDeltaTime);
+  if (u32Epoch != 0 && iDeltaTime > 0 && iDeltaTime < 24*60*60) { // Less than 24h, no need to sync the time
+      Log.info("%s [%d]: Skipping time sync\r\n", __FILE__, __LINE__);
+      prefs.end();
+      return true;
+  }
+  String ntp = prefs.getString("ntp_server", "time.google.com");
+
+  Log.info("%s [%d]: Using NTP: %s, fallback: time.cloudflare.com\r\n", __FILE__, __LINE__, ntp.c_str());
+  configTime(0, 0, ntp.c_str(), "time.cloudflare.com");
+  
+  for (int i = 0; i < SNTP_MAX_SERVERS; i++)
+  {
+    const char *srv = esp_sntp_getservername(i);
+    if (srv && strlen(srv) > 0)
+    {
+      Log.info("%s [%d]: SNTP server[%d]: %s\r\n", __FILE__, __LINE__, i, srv);
+    }
+  }
+
   Log.info("%s [%d]: Time synchronization...\r\n", __FILE__, __LINE__);
 
   // Wait for time to be set
@@ -1906,6 +2043,7 @@ static bool setClock()
   {
     sync_status = true;
     Log.info("%s [%d]: Time synchronization succeed!\r\n", __FILE__, __LINE__);
+    prefs.putUInt("last_sync", getTime()); // save epoch time of last sync
   }
   else
   {
@@ -1914,6 +2052,7 @@ static bool setClock()
 
   Log.info("%s [%d]: Current time - %s\r\n", __FILE__, __LINE__, asctime(&timeinfo));
 
+  prefs.end();
   return sync_status;
 }
 
@@ -1928,7 +2067,7 @@ static float readBatteryVoltage(void)
   Log.warning("%s [%d]: FAKE_BATTERY_VOLTAGE is defined. Returning 4.2V.\r\n", __FILE__, __LINE__);
   return 4.2f;
 #else
-  #if defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_SEEED_RETERMINAL_E1001)
+  #if defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_SEEED_RETERMINAL_E1001) || defined(BOARD_SEEED_RETERMINAL_E1002)
     pinMode(PIN_VBAT_SWITCH, OUTPUT);
     digitalWrite(PIN_VBAT_SWITCH, VBAT_SWITCH_LEVEL);
     delay(10); // Wait for the switch to stabilize
@@ -1942,7 +2081,7 @@ static float readBatteryVoltage(void)
     for (uint8_t i = 0; i < 8; i++) {
       adc += analogReadMilliVolts(PIN_BATTERY);
     }
-  #if defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_SEEED_RETERMINAL_E1001)
+  #if defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_SEEED_RETERMINAL_E1001) || defined(BOARD_XIAO_EPAPER_DISPLAY_3CLR)
     digitalWrite(PIN_VBAT_SWITCH, (VBAT_SWITCH_LEVEL == HIGH ? LOW : HIGH));
   #endif
     sensorValue = (adc / 8) * 2;
@@ -2064,7 +2203,7 @@ static void writeSpecialFunction(SPECIAL_FUNCTION function)
     Log.info("%s [%d]: SF saved. Reading...\r\n", __FILE__, __LINE__);
     if ((SPECIAL_FUNCTION)preferences.getUInt(PREFERENCES_SF_KEY, 0) == function)
     {
-      Log.info("%s [%d]: No needed to re-write\r\n", __FILE__, __LINE__);
+      Log.info("%s [%d]: No need to re-write\r\n", __FILE__, __LINE__);
     }
     else
     {
@@ -2112,14 +2251,40 @@ static void showMessageWithLogo(MSG message_type, const ApiSetupResponse &apiRes
   preferences.putBool(PREFERENCES_DEVICE_REGISTERED_KEY, false);
 }
 
-// 0 = larger glyph, centered for message screens
-// 1 = small glyph, set in lower-right corner for loading screen
+// 0 = larger glyph for message screens
+// 1 = loading screen (mostly blank, small glyph in lower right corner)
 static uint8_t *storedLogoOrDefault(int iType)
 {
-//  if (filesystem_read_from_file("/logo.bmp", buffer, DEFAULT_IMAGE_SIZE))
-//  {
-//    return buffer;
-//  }
+//
+// See if there are custom art assets in FLASH memory.
+// The top 4K of FLASH would be reserved for this data.
+// The images are stored as: logo_medium, loading
+//
+   uint32_t u32Size;
+   //esp_flash_t chip;
+   uint8_t *s;
+   uint16_t u16Size;
+   BRAND *pBrand;
+
+   u32Size = ESP.getFlashChipSize();
+   Log_info("%s [%d]: esp flash size: %d\r\n", __FILE__, __LINE__, u32Size);
+   if (u32Size != 0) {
+   pBrand = (BRAND *)malloc(sizeof(BRAND)); // DEBUG - we can leak this memory for now
+   esp_flash_init(NULL);
+   esp_flash_read(NULL, (void *)pBrand, u32Size-sizeof(BRAND), sizeof(BRAND));
+   if (*(uint16_t *)&pBrand->u8Images[0] == 0xBBBF /*BB_BITMAP_MARKER*/) {
+      // Group5 compressed images are present, use them
+      if (iType == 0) {
+        return &pBrand->u8Images[0]; // the first image is the medium sized logo
+      } else { // the second image is the loading screen with small logo
+        // get the pointer to the loading image
+        s = &pBrand->u8Images[0];
+        u16Size = *(uint16_t *)&s[6]; // compressed image size
+        s += u16Size + 8; // skip to loading image
+        return s;
+      }
+   }
+  }
 #ifdef BOARD_TRMNL_X
     return const_cast<uint8_t *>(logo_medium);
 #else
@@ -2134,47 +2299,36 @@ static uint8_t *storedLogoOrDefault(int iType)
 #endif
 }
 
-static bool saveCurrentFileName(String &name)
+// Chop up long names to fit within the SPIFFS 31 character limit
+void fixFileName(const char *src, char *dest)
 {
-  if (!preferences.getString(PREFERENCES_FILENAME_KEY, "").equals(name))
-  {
-    Log.info("%s [%d]: New filename:  - %s\r\n", __FILE__, __LINE__, name.c_str());
-    size_t res = preferences.putString(PREFERENCES_FILENAME_KEY, name);
-    if (res > 0)
-    {
-      Log.info("%s [%d]: New filename saved in the preferences - %d\r\n", __FILE__, __LINE__, res);
-      return true;
-    }
-    else
-    {
-      Log.error("%s [%d]: New filename saving error!\r\n", __FILE__, __LINE__);
-      return false;
-    }
-  }
-  else
-  {
-    Log.info("%s [%d]: No needed to re-write\r\n", __FILE__, __LINE__);
-    return true;
-  }
-}
+int iLen;
 
+  // SPIFFS only allows 32 bytes for the name, so if it's too long, fix it
+  dest[0] = '/'; // SPIFFS requires files to start with the root dir
+  iLen = strlen(src);
+  if (iLen > 31) {
+    memcpy(&dest[1], src, 7); // first 7 chars are "plugin-" or "mashup-"
+    strcpy(&dest[8], &src[iLen-17]); // get the prefix name and unique id plus timestamp (e.g. mashup-066cc3-1771674964)
+  } else {
+    strncpy(&dest[1], src, 31); // use it as-is
+  }
+} /* fixFileName() */
+
+//
+// Abstract:
+// Compares the current filename returned from the API server
+// with files we previously stored in FLASH (SPIFFS)
+//
+// returns: true if the file exists
+//
 static bool checkCurrentFileName(String &newName)
 {
-  String currentFilename = preferences.getString(PREFERENCES_FILENAME_KEY, "");
+char szTemp[36];
 
-  Log.error("%s [%d]: Current filename: %s\r\n", __FILE__, __LINE__, currentFilename);
-
-  if (currentFilename.equals(newName))
-  {
-    Log.info("%s [%d]: Current filename equals to the new filename\r\n", __FILE__, __LINE__);
-    return true;
-  }
-  else
-  {
-    Log.error("%s [%d]: Current filename doesn't equal to the new filename\r\n", __FILE__, __LINE__);
-    return false;
-  }
-}
+  fixFileName(newName.c_str(), szTemp); // shorten the name (if needed) to fit the SPIFFS file length limit of 31 chars + 0 terminator
+  return filesystem_file_exists(szTemp);
+} /* checkCurrentFileName() */
 
 static void wifiErrorDeepSleep()
 {

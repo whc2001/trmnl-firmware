@@ -11,34 +11,69 @@
 #define BB_EPAPER
 #include "bb_epaper.h"
 const DISPLAY_PROFILE dpList[4] = { // 1-bit and 2-bit display types for each profile
+#ifdef BOARD_XTEINK_X4
+    {EP426_800x480, EP426_800x480_4GRAY}, // default (for original EPD)
+    {EP426_800x480, EP426_800x480_4GRAY}, // a = uses built-in fast + 4-gray
+    {EP426_800x480, EP426_800x480_4GRAY}, // b = darker grays
+};
+BBEPAPER bbep(EP426_800x480);
+#elif defined(BOARD_WAVESHARE_397)
+    {EP397_800x480, EP397_800x480_4GRAY}, // default (for original EPD)
+    {EP397_800x480, EP397_800x480_4GRAY}, // a = uses built-in fast + 4-gray
+    {EP397_800x480, EP397_800x480_4GRAY}, // b = darker grays
+};
+BBEPAPER bbep(EP397_800x480);
+#elif defined(BOARD_XIAO_EPAPER_DISPLAY_3CLR)
+    {EP75R_800x480, EP75R_800x480}, // default (for original EPD)
+    {EP75R_800x480, EP75R_800x480}, // a = uses built-in fast + 4-gray
+    {EP75R_800x480, EP75R_800x480}, // b = darker grays
+};
+BBEPAPER bbep(EP75R_800x480);
+#elif defined(BOARD_TRMNL_4CLR)
+    {EP75YR_800x480, EP75YR_800x480}, // default (for original EPD)
+    {EP75YR_800x480, EP75YR_800x480}, // a = uses built-in fast + 4-gray
+    {EP75YR_800x480, EP75YR_800x480}, // b = darker grays
+};
+BBEPAPER bbep(EP75YR_800x480);
+#elif defined(BOARD_SEEED_RETERMINAL_E1002)
+    {EP73_SPECTRA_800x480, EP73_SPECTRA_800x480}, // default (for original EPD)
+    {EP73_SPECTRA_800x480, EP73_SPECTRA_800x480}, // a = uses built-in fast + 4-gray
+    {EP73_SPECTRA_800x480, EP73_SPECTRA_800x480}, // b = darker grays
+};
+BBEPAPER bbep(EP73_SPECTRA_800x480);
+#else
     {EP75_800x480, EP75_800x480_4GRAY}, // default (for original EPD)
-    {EP75_800x480_GEN2, EP75_800x480_4GRAY_GEN2}, // a = uses built-in fast + 4-gray 
+    {EP75_800x480_GEN2, EP75_800x480_4GRAY_GEN2}, // a = uses built-in fast + 4-gray
     {EP75_800x480, EP75_800x480_4GRAY_V2}, // b = darker grays
 };
 BBEPAPER bbep(EP75_800x480);
-// Counts the number of partial updates to know when to do a full update
+#endif
+#ifdef BOARD_SEEED_RETERMINAL_E1002
+uint8_t u8SpectraPal[512]; // RGB333 mapped to closest Spectra6 color
+#endif // E1002
 #else
 #include "FastEPD.h"
 FASTEPD bbep;
 const uint8_t u8_graytable[] = {
-/* 0 */  2, 2, 1, 1, 1, 1, 1, 1, 
+/* 0 */  2, 2, 1, 1, 1, 1, 1, 1,
 /* 1 */  2, 2, 2, 2, 1, 1, 2, 1,
-/* 2 */  2, 2, 2, 1, 1, 1, 1, 2, 
+/* 2 */  2, 2, 2, 1, 1, 1, 1, 2,
 /* 3 */  2, 2, 2, 1, 1, 1, 1, 2,
 /* 4 */  2, 2, 2, 2, 1, 1, 1, 2,
 /* 5 */  2, 2, 2, 2, 1, 2, 2, 1,
 /* 6 */  2, 2, 1, 1, 1, 2, 1, 2,
-/* 7 */  2, 2, 2, 1, 1, 2, 1, 2, 
-/* 8 */  1, 1, 1, 1, 1, 1, 2, 2, 
-/* 9 */  2, 1, 1, 1, 1, 1, 2, 2, 
-/* 10 */  2, 2, 1, 1, 1, 1, 2, 2, 
-/* 11 */  2, 2, 2, 1, 1, 1, 2, 2, 
-/* 12 */  2, 1, 1, 2, 1, 1, 2, 2, 
-/* 13 */  2, 2, 2, 2, 1, 1, 2, 2, 
-/* 14 */  2, 2, 2, 2, 2, 1, 2, 2, 
+/* 7 */  2, 2, 2, 1, 1, 2, 1, 2,
+/* 8 */  1, 1, 1, 1, 1, 1, 2, 2,
+/* 9 */  2, 1, 1, 1, 1, 1, 2, 2,
+/* 10 */  2, 2, 1, 1, 1, 1, 2, 2,
+/* 11 */  2, 2, 2, 1, 1, 1, 2, 2,
+/* 12 */  2, 1, 1, 2, 1, 1, 2, 2,
+/* 13 */  2, 2, 2, 2, 1, 1, 2, 2,
+/* 14 */  2, 2, 2, 2, 2, 1, 2, 2,
 /* 15 */  2, 2, 2, 2, 2, 2, 2, 2
 };
 #endif
+// Counts the number of partial updates to know when to do a full update
 RTC_DATA_ATTR int iUpdateCount = 0;
 #include "Group5.h"
 #include <config.h>
@@ -48,13 +83,14 @@ RTC_DATA_ATTR int iUpdateCount = 0;
 #include <api-client/display.h>
 #include <trmnl_log.h>
 #include "png_flip.h"
-#include "../lib/bb_epaper/Fonts/nicoclean_8.h"
-#include "../lib/bb_epaper/Fonts/Inter_18.h"
-#include "../lib/bb_epaper/Fonts/Roboto_Black_24.h"
+#include "nicoclean_8.h"
+#include "Inter_18.h"
+#include "Roboto_Black_24.h"
 extern char filename[];
 extern Preferences preferences;
 extern ApiDisplayResult apiDisplayResult;
 uint32_t iTempProfile;
+static int i426Workaround = 0;
 static uint8_t *pDither;
 
 // Runtime control for light sleep (true = enabled, false = disabled)
@@ -71,8 +107,8 @@ void display_init(void)
     iTempProfile = preferences.getUInt(PREFERENCES_TEMP_PROFILE, TEMP_PROFILE_DEFAULT);
     Log_info("Saved temperature profile: %d", iTempProfile);
 #ifdef BB_EPAPER
+    bbep.setPanelType(dpList[iTempProfile].OneBit); // must be set BEFORE calling initio
     bbep.initIO(EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN, EPD_CS_PIN, EPD_MOSI_PIN, EPD_SCK_PIN, 8000000);
-    bbep.setPanelType(dpList[iTempProfile].OneBit);
 #else
     bbep.initPanel(BB_PANEL_EPDIY_V7_16); //, 26000000);
     bbep.setPanelSize(1872, 1404, BB_PANEL_FLAG_MIRROR_X);
@@ -85,9 +121,9 @@ void display_init(void)
  * @param enabled true to enable light sleep, false to disable
  * @return none
  */
-void display_set_light_sleep(bool enabled)
+void display_set_light_sleep(uint8_t enabled)
 {
-    g_light_sleep_enabled = enabled;
+    bbep.setLightSleep(enabled);
 }
 
 /**
@@ -118,6 +154,7 @@ void display_reset(void)
 {
     Log_info("e-Paper Clear start");
     bbep.fillScreen(BBEP_WHITE);
+    bbep.setLightSleep(true);
 #ifdef BB_EPAPER
     if (!apiDisplayResult.response.maximum_compatibility) {
         bbep.refresh(REFRESH_FAST, true);
@@ -308,7 +345,7 @@ void Paint_DrawMultilineText(UWORD x_start, UWORD y_start, const char *message,
         bbep.print(lines[j]);
     }
 }
-/** 
+/**
  * @brief Reduce the bit depth of line of pixels using thresholding (aka simple color mapping)
  * @param Destination bit count (1 or 2)
  * @param Pointer to a PNG palette (3 bytes per entry)
@@ -384,7 +421,7 @@ void ReduceBpp(int iDestBpp, int iPixelType, uint8_t *pPalette, uint8_t *pSrc, u
         } else { // generate 4 gray levels (2 bits)
             u8 |= (3 ^ (g >> 6)); // 4 gray levels (inverted relative to 1-bit)
         }
-        count -= iDestBpp;        
+        count -= iDestBpp;
         if (count == 0) { // byte is full, move on
             *d++ = u8;
             u8 = 0;
@@ -404,19 +441,355 @@ enum {
     PNG_2_BIT_BOTH,
     PNG_2_BIT_INVERTED,
 };
+//
+// Match the given pixel to black (00), white (01), or red (1x)
+//
+unsigned char GetBWRPixel(int r, int g, int b)
+{
+    uint8_t ucOut=BBEP_BLACK;
+    int gr;
 
-/** 
+    gr = (b + r + g*2)>>2; // gray
+    // match the color to closest of black/white/red
+    if (r > g && r > b) { // red is dominant
+        if (gr < 100 && r < 80) {
+            // black
+        } else {
+            if (r-b > 32 && r-g > 32) {
+                // is red really dominant?
+                ucOut = BBEP_RED; // red (can be 2 or 3, but 3 is compatible w/BWYR)
+            } else { // yellowish should be white
+                // no, use white instead of pink/yellow
+                ucOut = BBEP_WHITE;
+            }
+        }
+    } else { // check for white/black
+        if (gr >= 128) {
+            ucOut = BBEP_WHITE; // white
+        } else {
+            // black
+        }
+    }
+    return ucOut;
+} /* GetBWRPixel() */
+//
+// Match the given pixel to black (00), white (01), yellow (10), or red (11)
+// returns 2 bit value of closest matching color
+//
+unsigned char GetBWYRPixel(int r, int g, int b)
+{
+    uint8_t ucOut=BBEP_BLACK;
+    int gr;
+
+    gr = (b + r + g*2)>>2; // gray
+    // match the color to closest of black/white/yellow/red
+    if (r > b || g > b) { // red or yellow is dominant
+        if (gr < 90 && r < 80 && g < 80) {
+            // black
+        } else {
+            if (r-b > 32 && r-g > r/2) {
+                // is red really dominant?
+                ucOut = BBEP_RED; // red
+            } else if (r-b > 32 && g-b > 32) {
+                // yes, yellow
+                ucOut = BBEP_YELLOW;
+            } else {
+                ucOut = BBEP_WHITE; // gray/white
+            }
+        }
+    } else { // check for white/black
+        if (gr >= 100) {
+            ucOut = BBEP_WHITE; // white
+        } else {
+            // black
+        }
+    }
+    return ucOut;
+} /* GetBWYRPixel() */
+#ifdef BOARD_SEEED_RETERMINAL_E1002
+//
+// bb_epaper colors to map to Spectra6 colors
+// The RGB values are not correct for the panel, but for simple mapping
+// these work best. These get mapped from bb_epaper color indices to
+// Spectra6 color indices by the setPixel() method.
+//
+const int iSpectraRGB[] = { // r, g, b
+    0, 0, 0, // black = 0
+    192,192,192, // white = 1
+    192,192,0, // yellow = 2
+    192,0,0, // red = 3
+    0,0,192, // blue = 4
+    0,192,0, // green = 5
+};
+// Map the Spectra6 palette to the closest RGB333 values
+void CreateSpectra6Pal(void)
+{
+    int i, j;
+    int r, g, b, r1, g1, b1;
+    int dist, min_dist, min_index;
+
+    for (i=0; i<512; i++) { // RGB333
+        r = (i & 7)*36;
+        g = ((i >> 3) & 7)*36;
+        b = (i >> 6)*36;
+        min_dist = 0x7fffffff;
+        min_index = 0;
+        for (j=0; j<6; j++) { // match to the closes Spectra6 color
+            r1 = iSpectraRGB[j*3];
+            g1 = iSpectraRGB[j*3+1];
+            b1 = iSpectraRGB[j*3+2];
+            dist = (r - r1) * (r - r1); // delta red squared
+            dist += (g - g1) * (g - g1); // delta green squared
+            dist += (b - b1) * (b - b1); // delta blue squared
+            if (dist < min_dist) {
+                min_dist = dist;
+                min_index = j;
+            }
+        } // for j
+        u8SpectraPal[i] = min_index; // best match palette index for this RGB333 color
+    } // for i
+} /* CreateSpectra6Pal() */
+//
+// Convert the RGB value into one of 6 Spectra6 colors
+//
+uint8_t GetSpectraPixel(int r, int g, int b)
+{
+uint8_t c;
+uint16_t rgb333;
+
+    rgb333 = (r>>5) + ((g & 0xe0) >> 2) + ((b & 0xe0) << 1);
+    c = u8SpectraPal[rgb333];
+    return c;
+} /* GetSpectraPixel() */
+#endif // E1002
+/**
  * @brief Callback function for each line of PNG decoded
  * @param PNGDRAW structure containing the current line and relevant info
  * @return none
  */
 #ifdef BB_EPAPER
+#ifdef BOARD_SEEED_RETERMINAL_E1002
+//
+// Draw the PNG image into the local framebuffer memory using the drawPixel() method
+// to do color translation and to properly format the memory layout
+//
+int png_draw_6clr(PNGDRAW *pDraw)
+{
+    uint8_t r=0, g=0, b=0, *s, *pPal, *pPalette = pDraw->pPalette;
+    int x, y, iDelta, iBpp = pDraw->iBpp;
+    y = pDraw->y;
+    switch (pDraw->iPixelType) {
+        case PNG_PIXEL_INDEXED:
+            break;
+        case PNG_PIXEL_TRUECOLOR:
+	        if (iBpp <= 8) {
+                iBpp *= 3;
+	        }
+            pPalette = NULL;
+            break;
+        case PNG_PIXEL_TRUECOLOR_ALPHA:
+	        if (iBpp <= 8) {
+                iBpp *= 4;
+	        }
+            pPalette = NULL;
+            break;
+        case PNG_PIXEL_GRAYSCALE:
+            pPalette = NULL;
+            break;
+    } // switch on pixel type
+    iDelta = iBpp/8;
+    s = pDraw->pPixels;
+    for (x=0; x<pDraw->iWidth; x++) { // slower code, but less code :)
+        switch (iBpp) {
+            case 24:
+            case 32:
+                r = s[0];
+                g = s[1];
+                b = s[2];
+                s += iDelta;
+                break;
+            case 16:
+                r = s[1] & 0xf8; // red
+                g = ((s[0] | s[1] << 8) >> 3) & 0xfc; // green
+                b = s[0] << 3;
+                s += 2;
+                break;
+                case 8:
+                    if (pPalette) {
+                        pPal = &pPalette[s[0] * 3];
+                        r = pPal[0];
+                        g = pPal[1];
+                        b = pPal[2];
+                    } else {
+                        r = g = b = s[0];
+                    }
+                    s++;
+                    break;
+                case 4:
+                    if (pPalette) {
+                        if (x & 1) {
+                            pPal = &pPalette[(s[0] & 0xf) * 3];
+                            s++;
+                        } else {
+                            pPal = &pPalette[(s[0]>>4) * 3];
+                        }
+                        r = pPal[0];
+                        g = pPal[1];
+                        b = pPal[2];
+                    } else {
+                        if (x & 1) {
+                            r = g = b = (s[0] & 0xf) | (s[0] << 4);
+                            s++;
+                        } else {
+                            r = g = b = (s[0] >> 4) | (s[0] & 0xf0);
+                        }
+                    }
+                    break;
+		case 2:
+		    if (pPalette) {
+			pPal = &pPalette[((s[0] >> ((3-(x&3))*2)) & 3) * 3];
+			r = pPal[0]; g = pPal[1]; b = pPal[2];
+		    } else {
+			r = g = b = (s[0] << ((x&3)*2)) & 0xc0;
+		    }
+		    if ((x & 3) == 3) s++;
+		    break;
+                case 1:
+                    if (pPalette) {
+                        pPal = &pPalette[((s[0] >> (7-(x&7))) & 1) * 3];
+                        r = pPal[0]; g = pPal[1]; b = pPal[2];
+                    } else {
+                        r = g = b = ((s[0] << (x&7)) & 0x80);
+                    }
+                    if ((x & 7) == 7) s++;
+                    break;
+            } // switch on bpp
+            bbep.drawPixel(x, y, GetSpectraPixel(r, g, b));
+        } // for x
+    return 1; // continue decoding
+} /* png_draw_6clr() */
+#endif // E1002 (Spectra6 only)
+
+#ifdef BOARD_TRMNL_4CLR
+//
+// Draw the PNG image into the local framebuffer memory using the drawPixel() method
+// to do color translation and to properly format the memory layout
+//
+int png_draw_4clr(PNGDRAW *pDraw)
+{
+    uint8_t r=0, g=0, b=0, *s, *pPal, *pPalette = pDraw->pPalette;
+    int x, iDelta, iBpp = pDraw->iBpp;
+    uint8_t uc=0, *d, *pTemp = bbep.getCache(); // get some scratch memory (not from the stack)
+
+    d = pTemp;
+    switch (pDraw->iPixelType) {
+        case PNG_PIXEL_INDEXED:
+            break;
+        case PNG_PIXEL_TRUECOLOR:
+	        if (iBpp <= 8) {
+                iBpp *= 3;
+	        }
+            pPalette = NULL;
+            break;
+        case PNG_PIXEL_TRUECOLOR_ALPHA:
+	        if (iBpp <= 8) {
+                iBpp *= 4;
+	        }
+            pPalette = NULL;
+            break;
+        case PNG_PIXEL_GRAYSCALE:
+            pPalette = NULL;
+            break;
+    } // switch on pixel type
+    iDelta = iBpp/8;
+    s = pDraw->pPixels;
+    for (x=0; x<pDraw->iWidth; x++) { // slower code, but less code :)
+        switch (iBpp) {
+            case 24:
+            case 32:
+                r = s[0];
+                g = s[1];
+                b = s[2];
+                s += iDelta;
+                break;
+            case 16:
+                r = s[1] & 0xf8; // red
+                g = ((s[0] | s[1] << 8) >> 3) & 0xfc; // green
+                b = s[0] << 3;
+                s += 2;
+                break;
+                case 8:
+                    if (pPalette) {
+                        pPal = &pPalette[s[0] * 3];
+                        r = pPal[0];
+                        g = pPal[1];
+                        b = pPal[2];
+                    } else {
+                        r = g = b = s[0];
+                    }
+                    s++;
+                    break;
+                case 4:
+                    if (pPalette) {
+                        if (x & 1) {
+                            pPal = &pPalette[(s[0] & 0xf) * 3];
+                            s++;
+                        } else {
+                            pPal = &pPalette[(s[0]>>4) * 3];
+                        }
+                        r = pPal[0];
+                        g = pPal[1];
+                        b = pPal[2];
+                    } else {
+                        if (x & 1) {
+                            r = g = b = (s[0] & 0xf) | (s[0] << 4);
+                            s++;
+                        } else {
+                            r = g = b = (s[0] >> 4) | (s[0] & 0xf0);
+                        }
+                    }
+                    break;
+                case 2:
+                    if (pPalette) {
+                    pPal = &pPalette[((s[0] >> ((3-(x&3))*2)) & 3) * 3];
+                    r = pPal[0]; g = pPal[1]; b = pPal[2];
+                    } else {
+                    r = g = b = (s[0] << ((x&3)*2)) & 0xc0;
+                    }
+                    if ((x & 3) == 3) s++;
+                    break;
+                case 1:
+                    if (pPalette) {
+                        pPal = &pPalette[((s[0] >> (7-(x&7))) & 1) * 3];
+                        r = pPal[0]; g = pPal[1]; b = pPal[2];
+                    } else {
+                        r = g = b = ((s[0] << (x&7)) & 0x80);
+                    }
+                    if ((x & 7) == 7) s++;
+                    break;
+            } // switch on bpp
+            uc <<= 2;
+            uc |= GetBWYRPixel(r, g, b); // get the best matching 2-bit color
+            if ((x & 3) == 3) { // 4 pixels packed into each byte
+                *d++ = uc;
+            }
+        } // for x
+    bbep.writeData(pTemp, (pDraw->iWidth+3)/4);
+    return 1; // continue decoding
+} /* png_draw4clr() */
+#endif // BOARD_TRMNL_4CLR (4 color only)
+
 int png_draw(PNGDRAW *pDraw)
 {
     int x;
     uint8_t ucBppChanged = 0, ucInvert = 0;
     uint8_t uc, ucMask, src, *s, *d, *pTemp = bbep.getCache(); // get some scratch memory (not from the stack)
     int iPlane = *(int *)pDraw->pUser;
+    int iWidth;
+
+    iWidth = pDraw->iWidth;
+    if (pDraw->y >= bbep.height()) return 0; // stop decoding if we'll go past the bottom
+    if (iWidth > bbep.width()) iWidth = bbep.width(); // crop image width to display size if it's larger
 
     if (pDraw->iPixelType == PNG_PIXEL_INDEXED || pDraw->iBpp > 2) {
         if (pDraw->iBpp == 1) { // 1-bit output, just see which color is brighter
@@ -428,7 +801,7 @@ int png_draw(PNGDRAW *pDraw)
           }
         } else {
             // Reduce the source image to 1-bpp or 2-bpp
-            ReduceBpp((pDraw->pUser) ? 2:1, pDraw->iPixelType, pDraw->pPalette, pDraw->pPixels, pTemp, pDraw->iWidth, pDraw->iBpp);
+            ReduceBpp((pDraw->pUser) ? 2:1, pDraw->iPixelType, pDraw->pPalette, pDraw->pPixels, pTemp, iWidth, pDraw->iBpp);
             ucBppChanged = 1;
         }
     } else if (pDraw->iBpp == 2) {
@@ -439,9 +812,13 @@ int png_draw(PNGDRAW *pDraw)
     if (iPlane == PNG_1_BIT || iPlane == PNG_1_BIT_INVERTED) {
         // 1-bit output, decode the single plane and write it
         if (iPlane == PNG_1_BIT_INVERTED) ucInvert = ~ucInvert; // to do PLANE_FALSE_DIFF
-        for (x=0; x<pDraw->iWidth; x+= 8) {
-          d[0] = s[0] ^ ucInvert;
-          d++; s++;
+        if (iPlane == PNG_1_BIT_INVERTED && (bbep.capabilities() & BBEP_3COLOR)) { // write the red plane as 0's for this case
+            memset(d, 0, iWidth/8);
+        } else {
+            for (x=0; x<iWidth; x+= 8) {
+                d[0] = s[0] ^ ucInvert;
+                d++; s++;
+            }
         }
     } else { // we need to split the 2-bit data into plane 0 and 1
         src = *s++;
@@ -452,7 +829,7 @@ int png_draw(PNGDRAW *pDraw)
                 ucInvert = ~ucInvert; // the invert rule is backwards for grayscale data
             }
             src = ~src;
-            for (x=0; x<pDraw->iWidth; x++) {
+            for (x=0; x<iWidth; x++) {
                 uc <<= 1;
                 if (src & 0xc0) { // non-white -> black
                     uc |= 1; // high bit of source pair
@@ -468,7 +845,7 @@ int png_draw(PNGDRAW *pDraw)
             } // for x
         } else { // normal 0/1 split plane
             ucMask = (iPlane == PNG_2_BIT_0) ? 0x40 : 0x80; // lower or upper source bit
-            for (x=0; x<pDraw->iWidth; x++) {
+            for (x=0; x<iWidth; x++) {
                 uc <<= 1;
                 if (src & ucMask) {
                     uc |= 1; // high bit of source pair
@@ -484,7 +861,7 @@ int png_draw(PNGDRAW *pDraw)
             } // for x
         }
     }
-    bbep.writeData(pTemp, (pDraw->iWidth+7)/8);
+    bbep.writeData(pTemp, (iWidth+7)/8);
     return 1;
 } /* png_draw() */
 #else // TRMNL_X version
@@ -665,7 +1042,7 @@ int png_draw_count(PNGDRAW *pDraw)
     pFlags[0] = set_bits; // put it back in the flags array
     return 1;
 } /* png_draw_count() */
-/** 
+/**
  * @brief Function to decode a PNG and count the number of unique colors
  *        This is needed because 2-bit (4gray) images can sometimes contain
  *        only 2 unique colors. This will allow us to use partial (non-flickering)
@@ -691,7 +1068,7 @@ int i, iColors;
     return iColors;
 } /* png_count_colors() */
 
-/** 
+/**
  * @brief JPEGDEC callback function passed blocks of MCUs (minimum coded units)
  * @param pointer to the JPEGDRAW structure
  * @return 1 to continue decoding or 0 to abort
@@ -747,7 +1124,7 @@ uint8_t src=0, uc=0, ucMask, *s, *d, *pTemp = bbep.getCache();
 #endif
     return 1; // continue decoding
 } /* jpeg_draw() */
-/** 
+/**
  * @brief Function to decode and display a JPEG image from memory
  *        The decoded lines are written directly into the EPD framebuffer
  *        due to insufficient RAM to hold the fully decoded image
@@ -803,7 +1180,7 @@ int iPlane = 0;
     free(jpg);
     return rc;
 } /* jpeg_to_epd() */
-/** 
+/**
  * @brief Function to decode and display a PNG image from memory
  *        The decoded lines are written directly into the EPD framebuffer
  *        due to insufficient RAM to hold the fully decoded image
@@ -827,18 +1204,38 @@ PNG *png = new PNG();
         if (png->getWidth() == bbep.height() && png->getHeight() == bbep.width()) {
             Log_info("Rotating canvas to portrait orientation");
         } else if (png->getWidth() > bbep.width() || png->getHeight() > bbep.height()) {
-            Log_error("PNG image is too large for display size (%dx%d)", png->getWidth(), png->getHeight());
-            rc = -1;
-        } else if (png->getBpp() > MAX_BIT_DEPTH) {
-            Log_error("Unsupported PNG bit depth (only 1 to %d-bpp supported), this file has %d-bpp", MAX_BIT_DEPTH, png->getBpp());
-            rc = -1;
+            Log_info("PNG image is larger than the display (%dx%d), it will be cropped", png->getWidth(), png->getHeight());
         }
         if (rc == PNG_SUCCESS) { // okay to decode
             Log_info("%s [%d]: Decoding %d-bpp png (current)\r\n", __FILE__, __LINE__, png->getBpp());
             // Prepare target memory window (entire display)
 #ifdef BB_EPAPER
+#ifdef BOARD_SEEED_RETERMINAL_E1002
+            CreateSpectra6Pal(); // create a fast color matching palette
+            if (bbep.allocBuffer() != BBEP_SUCCESS) {
+                Log_error("%s [%d]: bbep.AllocBuffer failed!\n\r", __FILE__, __LINE__);
+                return -1;
+            }
+            Log_info("%s [%d]: decoding for 6-color EPD\r\n", __FILE__, __LINE__);
+            png->openRAM((uint8_t *)pPNG, iDataSize, png_draw_6clr);
+            png->decode(NULL, 0);
+            png->close();
+            bbep.writePlane();
+            free(png); // free the decoder instance
+            return REFRESH_FULL;
+#endif // E1002
+#ifdef BOARD_TRMNL_4CLR
+            Log_info("%s [%d]: decoding for 4-color EPD\r\n", __FILE__, __LINE__);
+            png->openRAM((uint8_t *)pPNG, iDataSize, png_draw_4clr);
+            bbep.startWrite(PLANE_1); // start writing image data
+            png->decode(NULL, 0);
+            png->close();
+            free(png); // free the decoder instance
+            return REFRESH_FULL;
+#endif // BOARD_TRMNL_4CLR
             bbep.setAddrWindow(0, 0, bbep.width(), bbep.height());
             if (png->getBpp() == 1 || (png->getBpp() == 2 && png_count_colors(png, pPNG, iDataSize) == 2)) { // 1-bit image (single plane)
+                png->close(); // use a different PNGDraw callback for color matching
                 bbep.setPanelType(dpList[iTempProfile].OneBit);
                 rc = REFRESH_PARTIAL; // the new image is 1bpp - try a partial update
                 bbep.startWrite(PLANE_0); // start writing image data to plane 0
@@ -854,7 +1251,7 @@ PNG *png = new PNG();
                     }
                 }
                 png->close();
-                if (iTempProfile != 0) { // need to write the inverted plane to do PLANE_FALSE_DIFF
+                if (bbep.getPanelType() != EP75_800x480) { // need to write the inverted plane to do PLANE_FALSE_DIFF
                     bbep.startWrite(PLANE_1); // start writing image data to plane 1
                     png->openRAM((uint8_t *)pPNG, iDataSize, png_draw);
                     if (iPlane == PNG_1_BIT) {
@@ -864,7 +1261,7 @@ PNG *png = new PNG();
                     }
                     png->decode(&iPlane, 0);
                 } // temp profile needs the second plane written
-            } else { // 2-bpp
+            } else { // 2-bpp (or greater, but reduced to 2-bpp)
                 bbep.setPanelType(dpList[iTempProfile].TwoBit);
                 rc = REFRESH_FULL; // 4gray mode must be full refresh
                 iUpdateCount = 0; // grayscale mode resets the partial update counter
@@ -886,11 +1283,13 @@ PNG *png = new PNG();
             png->close();
 #endif
         }
+    } else {
+        Log_error("%s [%d]: png->openRAM() returned %d", __FILE__, __LINE__, rc);
     }
     free(png); // free the decoder instance
     return rc;
 } /* png_to_epd() */
-/** 
+/**
  * @brief Function to show the image on the display
  * @param image_buffer pointer to the uint8_t image buffer
  * @param reverse shows if the color scheme is reverse
@@ -929,6 +1328,14 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait)
         }
     }
 #endif
+#ifdef BB_EPAPER
+    if (i426Workaround) {
+        // After a partial update, the 4.26" 800x480 needs to be 'reset' to accept writes
+        // This is only needed if the user pressed the WAKE button and there will be 2 updates
+        // while the power is on
+        bbep.initIO(EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN, EPD_CS_PIN, EPD_MOSI_PIN, EPD_SCK_PIN, 8000000);
+    }
+#endif // BB_EPAPER
     if (isPNG == true && data_size < MAX_IMAGE_SIZE)
     {
         Log_info("Drawing PNG");
@@ -952,11 +1359,11 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait)
             int y = (height - pBBB->height)/2; // center it
             if (x > 0 || y > 0) // only clear if the image is smaller than the display
             {
-                bbep.fillScreen(BBEP_WHITE); 
-            }     
+                bbep.fillScreen(BBEP_WHITE);
+            }
             bbep.loadG5Image(image_buffer, x, y, BBEP_WHITE, BBEP_BLACK);
-        } 
-        else 
+        }
+        else
         {
          // This work-around is due to a lack of RAM; the correct method would be to use loadBMP()
             flip_image(image_buffer+62, bbep.width(), bbep.height(), false); // fix bottom-up bitmap images
@@ -965,7 +1372,11 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait)
 #endif
         }
 #ifdef BB_EPAPER
-        bbep.writePlane(PLANE_0); // send image data to the EPD
+#ifdef BOARD_XTEINK_X4
+        bbep.writePlane(PLANE_FALSE_DIFF);
+#else
+        bbep.writePlane(); // send image data to the EPD
+#endif
         iRefreshMode = REFRESH_PARTIAL;
 #endif
         iUpdateCount = 1; // use partial update
@@ -987,9 +1398,14 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait)
         Log_info("%s [%d]: Forcing fast refresh (not partial) since the TRMNL refresh_rate is set to > 30 min\n", __FILE__, __LINE__);
         iRefreshMode = REFRESH_FAST;
     }
+    if (bbep.capabilities() & (BBEP_4COLOR | BBEP_3COLOR | BBEP_7COLOR)) bWait = 1;
     if (!bWait) iRefreshMode = REFRESH_PARTIAL; // fast update when showing loading screen
     Log_info("%s [%d]: EPD refresh mode: %d\r\n", __FILE__, __LINE__, iRefreshMode);
+    bbep.setLightSleep(true);
     bbep.refresh(iRefreshMode, bWait);
+    if ((bbep.getPanelType() == EP426_800x480 || bbep.getPanelType() == EP397_800x480) && iRefreshMode == REFRESH_PARTIAL) {
+        i426Workaround = 1; // need to re-initialize the controller for another update before sleeping
+    }
     if (bAlloc) {
         bbep.freeBuffer();
     }
@@ -1054,7 +1470,7 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type)
         int y = (height - pBBB->height)/2; // center it
         if (x > 0 || y > 0) // only clear if the image is smaller than the display
         {
-            bbep.fillScreen(BBEP_WHITE); 
+            bbep.fillScreen(BBEP_WHITE);
         }
         bbep.loadG5Image(image_buffer, x, y, BBEP_WHITE, BBEP_BLACK);
     }
@@ -1347,7 +1763,7 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type)
     }
     break;
     case FILL_WHITE:
-    {   
+    {
         Log_info("Display set to white");
         bbep.fillScreen(BBEP_WHITE);
     }
@@ -1385,7 +1801,7 @@ void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const floa
         int y = (height - pBBB->height)/2; // center it
         if (x > 0 || y > 0) // only clear if the image is smaller than the display
         {
-            bbep.fillScreen(BBEP_WHITE); 
+            bbep.fillScreen(BBEP_WHITE);
         }
         bbep.loadG5Image(image_buffer, x, y, BBEP_WHITE, BBEP_BLACK);
     }
@@ -1397,11 +1813,11 @@ void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const floa
     }
 
     bbep.setFont(nicoclean_8); //Roboto_20);
-    bbep.setTextColor(BBEP_BLACK, BBEP_WHITE); 
+    bbep.setTextColor(BBEP_BLACK, BBEP_WHITE);
 
-    String voltageString = String("Initial voltage: ") 
-    + String(voltage[0], 4) 
-    + String(" V, ") 
+    String voltageString = String("Initial voltage: ")
+    + String(voltage[0], 4)
+    + String(" V, ")
     + String("  Final voltage: ")
     + String(voltage[1], 4)
     + String(" V, ")
@@ -1409,8 +1825,8 @@ void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const floa
     + String(voltage[2], 4)
     + String(" V");
 
-    String temperatureString = String("Initial temperature: ") 
-    + String(temperature[0], 4) 
+    String temperatureString = String("Initial temperature: ")
+    + String(temperature[0], 4)
     + String(" C, ")
     + String("  Final temperature: ")
     + String(temperature[1], 4)
@@ -1419,17 +1835,17 @@ void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const floa
     + String(temperature[2], 4)
     + String(" C");
 
-    
+
     bbep.getStringBox(voltageString.c_str(), &rect);
     bbep.setCursor((bbep.width() - rect.w) / 2, 340);
     bbep.print(voltageString);
-    
+
     bbep.getStringBox(temperatureString.c_str(), &rect);
     bbep.setCursor((bbep.width() - rect.w) / 2, 370);
     bbep.print(temperatureString);
 
-    String qaResultInstruction = (qa_result) 
-    ? "QA passed, press button to clear screen" 
+    String qaResultInstruction = (qa_result)
+    ? "QA passed, press button to clear screen"
     : "QA failed, please use another board and put in failure pile for investigation";
 
     bbep.getStringBox(qaResultInstruction.c_str(), &rect);
@@ -1459,7 +1875,7 @@ void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const floa
         bbep.getStringBox(string3.c_str(), &rect);
         bbep.setCursor((bbep.width() - rect.w) / 2, -1);
         bbep.print(string3);
-    */ 
+    */
 }
 
 /**
@@ -1513,7 +1929,7 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type, String friendly_i
         int x = (width - pBBB->width)/2;
         int y = (height - pBBB->height)/2; // center it
         if (x > 0 || y > 0) // only clear if the image is smaller than the display
-        { 
+        {
             bbep.fillScreen(BBEP_WHITE);
         }
         bbep.loadG5Image(image_buffer, x, y, BBEP_WHITE, BBEP_BLACK);
@@ -1536,7 +1952,7 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type, String friendly_i
     case FRIENDLY_ID:
     {
         Log_info("friendly id case");
-        const char string1[] = "Please sign up at usetrmnl.com/signup";
+        const char string1[] = "Please sign up at trmnl.com/start";
         bbep.getStringBox(string1, &rect);
 #ifdef __BB_EPAPER__
         bbep.setCursor((bbep.width() - rect.w)/2, 400);

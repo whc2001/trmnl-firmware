@@ -3,7 +3,7 @@
 
 #define FW_MAJOR_VERSION 1
 #define FW_MINOR_VERSION 7
-#define FW_PATCH_VERSION 2
+#define FW_PATCH_VERSION 8
 
 // Helper macros for stringification
 #define STRINGIFY(x) #x
@@ -71,9 +71,12 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
     WIFI_THIRD_RETRY = 300
 };
 
-#if defined(BOARD_TRMNL)
+#if defined(BOARD_TRMNL) || defined(BOARD_TRMNL_4CLR)
 #define PIN_INTERRUPT 2
 #define DEVICE_MODEL "og"
+#elif defined(BOARD_XTEINK_X4)
+#define DEVICE_MODEL "XTEINK_X4"
+#define PIN_INTERRUPT 3
 #elif defined(BOARD_TRMNL_X)
 #define PIN_INTERRUPT 0
 #define DEVICE_MODEL "x"
@@ -81,6 +84,11 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #define PIN_INTERRUPT 33
 #define DEVICE_MODEL "waveshare"
 #define FAKE_BATTERY_VOLTAGE
+#elif defined(BOARD_WAVESHARE_397)
+#define PIN_INTERRUPT 0
+#define DEVICE_MODEL "Waveshare_397"
+#define SENSOR_SDA 41
+#define SENSOR_SCL 42
 #elif defined(BOARD_SEEED_XIAO_ESP32C3)
 #define DEVICE_MODEL "seeed_esp32c3"
 #define PIN_INTERRUPT 9         //the boot button on the XIAO ESP32-C3, this button can't be used as wakeup  source though
@@ -92,7 +100,7 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #define DEVICE_MODEL "seeed_esp32s3"
 #define PIN_INTERRUPT 0         //the boot button on the XIAO ESP32-S3, this button works as regular wakeup button
 #define FAKE_BATTERY_VOLTAGE
-#elif defined(BOARD_XIAO_EPAPER_DISPLAY)
+#elif (defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_XIAO_EPAPER_DISPLAY_3CLR))
 #define DEVICE_MODEL "xiao_epaper_display"
 #define PIN_INTERRUPT 5         //with silkscreen "KEY3"
 #define PIN_VBAT_SWITCH 6       //load switch enable pin for battery voltage measurement
@@ -106,10 +114,17 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #define DEVICE_MODEL "DIY TRMNL ESP32S3"
 #define PIN_INTERRUPT 16
 #define FAKE_BATTERY_VOLTAGE
+#elif defined(BOARD_SEEED_RETERMINAL_E1002)
+#define DEVICE_MODEL "reTerminal E1002"
+#define PIN_INTERRUPT 3         //the green button
+#define PIN_VBAT_SWITCH 21      //load switch enable pin for battery voltage measurement
+#define VBAT_SWITCH_LEVEL HIGH  //load switch enable pin active level
 #endif
 
-#if defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_SEEED_RETERMINAL_E1001)
+#if defined(BOARD_XIAO_EPAPER_DISPLAY) || defined(BOARD_SEEED_RETERMINAL_E1001) || defined(BOARD_SEEED_RETERMINAL_E1002)
 #define PIN_BATTERY 1
+#elif defined(BOARD_XTEINK_X4)
+#define PIN_BATTERY 0
 #else
 #define PIN_BATTERY 3
 #endif
@@ -122,7 +137,6 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #define BUTTON_DOUBLE_CLICK_WINDOW 800
 
 #define SERVER_MAX_RETRIES 3
-
 #define API_BASE_URL "https://trmnl.app"
 
 #endif

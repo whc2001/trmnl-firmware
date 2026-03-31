@@ -1388,9 +1388,9 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait)
         Log_info("Saving new temperature profile (%d) to FLASH", iTempProfile);
         preferences.putUInt(PREFERENCES_TEMP_PROFILE, iTempProfile);
     }
-    if ((iUpdateCount & 7) == 0 || apiDisplayResult.response.maximum_compatibility == true) {
+    if (iUpdateCount == 0 || apiDisplayResult.response.maximum_compatibility == true) {
         Log_info("%s [%d]: Forcing full refresh; desired refresh mode was: %d\r\n", __FILE__, __LINE__, iRefreshMode);
-        iRefreshMode = REFRESH_FULL; // force full refresh every 8 partials
+        iRefreshMode = REFRESH_FULL; // force full refresh
     }
     int refresh_seconds = preferences.getUInt(PREFERENCES_SLEEP_TIME_KEY, SLEEP_TIME_TO_SLEEP);
     if (refresh_seconds >= 30*60 && iRefreshMode == REFRESH_PARTIAL) {
@@ -1409,7 +1409,7 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait)
     if (bAlloc) {
         bbep.freeBuffer();
     }
-    iUpdateCount++;
+    iUpdateCount = ((iUpdateCount + 1) % 4); // full update after 3 partial updates
 #else
     bbep.setCustomMatrix(u8_graytable, sizeof(u8_graytable));
     bbep.fullUpdate();
